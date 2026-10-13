@@ -63,7 +63,7 @@ Contributors to waterEntropy were supported by:
 
 .. image:: images/ccpbiosim-logo-white-background.png
    :height: 100px
-   :target: https://www.ccpbiosim.org/
+   :target: https://www.ccpbiosim.ac.uk/
 
 Indices and tables
 ==================
