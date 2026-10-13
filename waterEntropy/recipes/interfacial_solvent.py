@@ -5,6 +5,7 @@ coordination shells
 
 import logging
 import time
+from threading import Lock
 
 from dask.distributed import Client
 
@@ -20,6 +21,12 @@ import waterEntropy.maths.trig as Trig
 from waterEntropy.recipes.forces_torques import get_forces_torques
 from waterEntropy.utils.helpers import nested_dict
 import waterEntropy.utils.selections as Selections
+from waterEntropy.utils.topology_cache import get_topology_cache
+
+
+# A scattered Universe is mutable; concurrent tasks in one worker must not seek
+# it simultaneously, even if an external client uses multiple threads.
+_FRAME_LOCK = Lock()
 
 
 def find_interfacial_solvent(solutes, system, shells: ShellCollection):
@@ -136,7 +143,6 @@ def get_interfacial_shells(system, start: int, end: int, step: int):
             if shell.nearest_nonlike_idx is not None:
                 # 3b. populate the shells into a dictionary for stats
                 # only if a different atom is in the RAD shell
-                nearest = system.atoms[shell.nearest_nonlike_idx]
                 frame_solvent_shells = save_solvent_shells(
                     ts.frame,
                     shell.atom_idx,
@@ -186,6 +192,7 @@ def get_interfacial_water_orient_entropy(
     temperature=298,
     parallel=False,
     client=None,
+    restart_every=0,
 ):
     # pylint: disable=E1121
     # pylint: disable=R0913
@@ -204,49 +211,64 @@ def get_interfacial_water_orient_entropy(
     :param step: steps between frames
     :param parallel: set to True to run the parallel calculation
     :param client: dask client instance if custom cluster layout required
+    :param restart_every: number of batches to process between worker pool
+        restarts, when a client is created internally (client=None); 0 disables restarts. Workers
+        are restarted periodically to bound memory growth over long
+        trajectories, but restarting after every single batch (the previous
+        default) means a full worker-pool teardown/respawn roughly once per
+        n_workers frames, which dominates runtime on long trajectories.
     """
     # Initialise data structures to hold processed data.
     frame_solvent_indices = nested_dict()
     covariances = CovarianceCollection()
     hb_labels = HBLabels.HBLabelCollection()
     n_frames = 0
-    results = []
-    # Steps 1,2 and 3 in function calls.
-    indices = list(range(start, end, step))
-    if parallel is True:
-        # If no Dask client cluster has been setup externally then default to single host.
-        if client is None:
-            client = Client(
-                processes=True, threads_per_worker=1, silence_logs=logging.CRITICAL
-            )
-            # parallelise over frames by packing them and vars into batches and mapping
-            # them across dask workers.
-            batch_size = client.scheduler_info()["n_workers"]
-            batches = [
-                indices[i : i + batch_size] for i in range(0, len(indices), batch_size)
-            ]
-            for i, batch in enumerate(batches):
-                args = [(index, system) for index in batch]
-                futures = client.map(_entropy_per_step, args)
-                results.extend(client.gather(futures))
-                if i < len(batches) - 1:
-                    client.restart()
-                    time.sleep(2)
-        # Otherwise we are on HPC and we can run without the memory fixes.
-        else:
-            args = [(index, system) for index in indices]
-            futures = client.map(_entropy_per_step, args)
-            results.extend(client.gather(futures))
-        client.close()
-    else:
-        for index in indices:
-            results.append(_entropy_per_step((index, system)))
-    # merge the solvent indices dicts
-    for res in results:
+    def merge_result(res):
+        nonlocal n_frames
         frame_solvent_indices.update(res[0])
         covariances.merge(res[1])
         hb_labels.merge(res[2])
         n_frames += res[3]
+
+    indices = list(range(start, end, step))
+    if parallel is True:
+        owns_client = client is None
+        system_future = None
+        futures = []
+        try:
+            if owns_client:
+                client = Client(
+                    processes=True, threads_per_worker=1,
+                    silence_logs=logging.CRITICAL,
+                )
+            # Scatter once: preserve each worker's topology caches between frames.
+            # Bound retained frame payloads by the worker count, not trajectory length.
+            batch_size = max(1, len(client.scheduler_info()["workers"]))
+            system_future = client.scatter([system], broadcast=True, hash=False)[0]
+            for batch_number, offset in enumerate(range(0, len(indices), batch_size), 1):
+                batch = indices[offset:offset + batch_size]
+                futures = [client.submit(_locked_entropy_per_step, index,
+                                         system_future, pure=False) for index in batch]
+                # Consume in source order so floating-point merging is unchanged.
+                for future in futures:
+                    merge_result(future.result())
+                    future.release()
+                futures = []
+                if (owns_client and restart_every and batch_number % restart_every == 0
+                        and offset + batch_size < len(indices)):
+                    system_future.release()
+                    client.restart()
+                    system_future = client.scatter([system], broadcast=True, hash=False)[0]
+        finally:
+            if futures:
+                client.cancel(futures)
+            if system_future is not None:
+                system_future.release()
+            if owns_client and client is not None:
+                client.close()
+    else:
+        for index in indices:
+            merge_result(_entropy_per_step((index, system)))
     # 4. get the orientational entropy of interfacial waters and save
     #   them to a dictionary
     # TO-DO: add average Nc in Sorient dict
@@ -259,7 +281,7 @@ def get_interfacial_water_orient_entropy(
     Sorients.add_data(hb_labels)
     Sorient_dict = Sorients.resid_labelled_Sorient
     vibrations = Vibrations(temperature)
-    vibrations.add_data(covariances, diagonalise=False)
+    vibrations.add_data(covariances, diagonalise=True)
 
     return (
         Sorient_dict,
@@ -268,6 +290,15 @@ def get_interfacial_water_orient_entropy(
         frame_solvent_indices,
         n_frames,
     )
+
+
+def _locked_entropy_per_step(index, system):
+    with _FRAME_LOCK:
+        try:
+            return _entropy_per_step((index, system))
+        except Exception as exc:
+            exc.add_note(f"waterEntropy failed at source frame {index}")
+            raise
 
 
 def _entropy_per_step(args):
@@ -283,6 +314,9 @@ def _entropy_per_step(args):
     # 1. unpack vars
     index, system = args
     ts = system.trajectory[index]
+    cache = get_topology_cache(system)
+    resids = cache["resids"]
+    resnames = cache["resnames"]
     # 2. redeclare these on the frame by frame basis, and assemble them into the
     # main data structures upon return.
     frame_solvent_indices = nested_dict()
@@ -309,40 +343,36 @@ def _entropy_per_step(args):
         # 8b. find HBing in the shell
         HBond.get_shell_HBs(shell, system, HBs, shells)
         # 8c. find RAD shell labels
-        shell = RADLabels.get_shell_labels(solvent.index, system, shell, shells, HBs)
+        shell = RADLabels.get_shell_labels(solvent.index, system, shell, shells)
         # 8d. find HB labels
         HBLabels.get_HB_labels(solvent.index, system, HBs, shells)
         if shell.nearest_nonlike_idx is not None:
-            nearest = system.atoms[shell.nearest_nonlike_idx]
-            # nearest_resid = nearest.resid
-            # nearest_resname = nearest.resname
-            for nearest_resid, nearest_resname in zip(
-                [nearest.resid, 0], [nearest.resname, "all"]
-            ):
-                # 8e. populate the labels into a dictionary for stats
-                # only if a different atom is in the RAD shell
-                hb_labels.add_data(
-                    nearest_resid,
-                    nearest_resname,
-                    shell.labels,
-                    shell.donates_to_labels,
-                    shell.accepts_from_labels,
-                    shell.N_w,
-                )
-                frame_solvent_indices = save_solvent_indices(
-                    ts.frame,
-                    shell.atom_idx,
-                    nearest_resid,
-                    nearest_resname,
-                    frame_solvent_indices,
-                )
-                # 3f. calculate the running average of force and torque
-                # covariance matrices
-                solvent_molecule = system.atoms[solvent.index].fragment  # get molecule
-                get_forces_torques(
-                    covariances,
-                    solvent_molecule,
-                    f"{nearest_resname}_{nearest_resid}",
-                    system,
-                )
+            # 8e. populate the labels into a dictionary for stats
+            # only if a different atom is in the RAD shell
+            nearest_resid = resids[shell.nearest_nonlike_idx]
+            nearest_resname = resnames[shell.nearest_nonlike_idx]
+            hb_labels.add_data(
+                nearest_resid,
+                nearest_resname,
+                shell.labels,
+                shell.donates_to_labels,
+                shell.accepts_from_labels,
+                shell.N_w,
+            )
+            frame_solvent_indices = save_solvent_indices(
+                ts.frame,
+                shell.atom_idx,
+                nearest_resid,
+                nearest_resname,
+                frame_solvent_indices,
+            )
+            # 3f. calculate the running average of force and torque
+            # covariance matrices
+            solvent_molecule = system.atoms[solvent.index].fragment  # get molecule
+            get_forces_torques(
+                covariances,
+                solvent_molecule,
+                f"{nearest_resname}_{nearest_resid}",
+                system,
+            )
     return frame_solvent_indices, covariances, hb_labels, n_frames

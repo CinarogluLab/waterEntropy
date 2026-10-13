@@ -69,9 +69,6 @@ def test_Sorient_dict(interfacial_entropy_dicts):
             0.116959182573051,
             11.549772583950544,
             8.866118517437595,
-            1.0246793134504353,
-            11.549772583950546,
-            8.866118517437595,
         ]
     )
     assert Sorient_dict[2]["ARG"] == pytest.approx(
@@ -83,9 +80,6 @@ def test_Sorient_dict(interfacial_entropy_dicts):
             3.464361256421488,
             0.114223362162831,
             12.394889769242496,
-            9.388627866311323,
-            0.47562453963817075,
-            12.394889769242495,
             9.388627866311323,
         ]
     )
@@ -99,9 +93,6 @@ def test_Sorient_dict(interfacial_entropy_dicts):
             0.0798514739229025,
             12.077905047118842,
             9.183582113622649,
-            0.0,
-            12.077905047118845,
-            9.18358211362265,
         ]
     )
 
@@ -119,9 +110,9 @@ def test_covariances(interfacial_entropy_dicts):
         forces,
         np.array(
             [
-                [824648.12, 40709.41, -122310.016],
-                [40709.41, 1130557.41, 509577.56],
-                [-122310.016, 509577.56, 564357.39],
+                [824686, 40711, -122315],
+                [40711, 1130610, 509601],
+                [-122315, 509601, 564383],
             ]
         ),
     )
@@ -129,9 +120,9 @@ def test_covariances(interfacial_entropy_dicts):
         torques,
         np.array(
             [
-                [16555327.18, 2895550.56, -1668424.15],
-                [2895550.56, 3332761.45, -64663.65],
-                [-1668424.15, -64663.65, 8487963.46],
+                [16556105.19, 2895686.63, -1668502.55],
+                [2895686.63, 3332918.07, -64666.68],
+                [-1668502.55, -64666.68, 8488362.3],
             ]
         ),
     )
@@ -147,12 +138,12 @@ def test_vibrations(interfacial_entropy_dicts):
     trans_freqs = vibrations.translational_freq[("ACE_1", "WAT")]
     rot_freqs = vibrations.rotational_freq[("ACE_1", "WAT")]
 
-    assert np.allclose(Strans, np.array([21.93192349, 16.6612125, 14.52832366]))
-    assert np.allclose(sum(Strans), 53.12145964157872)
-    assert np.allclose(Srot, np.array([4.95436837, 11.94115717, 7.63322808]))
-    assert np.allclose(sum(Srot), 24.528753622255945)
-    assert np.allclose(trans_freqs, np.array([[237430, 850514, 1431617]]))
-    assert np.allclose(rot_freqs, np.array([[17463732, 2712583, 8199736]]))
+    assert np.allclose(Strans, np.array([16.787066, 15.49228514, 18.34936798]))
+    assert np.allclose(sum(Strans), 50.628719)
+    assert np.allclose(Srot, np.array([5.13190029, 11.11787766, 7.50395398]))
+    assert np.allclose(sum(Srot), 23.75373)
+    assert np.allclose(trans_freqs, np.array([[824686, 1130610, 564383]]))
+    assert np.allclose(rot_freqs, np.array([[16556105, 3332918, 8488362]]))
 
 
 @INTERFACIAL_ENTROPY_DICTS

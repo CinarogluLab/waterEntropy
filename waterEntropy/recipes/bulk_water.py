@@ -11,6 +11,7 @@ from waterEntropy.entropy.convariances import CovarianceCollection
 from waterEntropy.entropy.orientations import Orientations
 from waterEntropy.entropy.vibrations import Vibrations
 from waterEntropy.recipes.forces_torques import get_forces_torques
+from waterEntropy.utils.topology_cache import get_topology_cache
 
 
 def get_bulk_water_orient_entropy(
@@ -35,6 +36,7 @@ def get_bulk_water_orient_entropy(
     hb_labels = HBLabels.HBLabelCollection()
     # pylint: disable=unused-variable
     for ts in system.trajectory[start:end:step]:
+        resnames = get_topology_cache(system)["resnames"]
         # initialise the RAD and HB class instances to store shell information
         shells = ShellCollection()
         HBs = HBond.HBCollection()
@@ -46,7 +48,7 @@ def get_bulk_water_orient_entropy(
             # 3a. find RAD shell of interfacial solvent
             shell = RADShell.get_RAD_shell(solvent, system, shells)
             # 3b. Set RAD shell labels as resname of neighbour
-            shell.labels = [system.atoms[n].resname for n in shell.UA_shell]
+            shell.labels = [resnames[n] for n in shell.UA_shell]
             # check shell only contains only solvent molecules
             if set(shell.labels) == {solvent.resname}:
                 # 3c. find HBing in the shell
@@ -81,7 +83,7 @@ def get_bulk_water_orient_entropy(
     Sorients.add_data(hb_labels)
     Sorient_dict = Sorients.resid_labelled_Sorient
     # 5. Get the vibrational entropy of interfacial waters
-    vibrations.add_data(covariances, diagonalise=False)
+    vibrations.add_data(covariances, diagonalise=True)
 
     return (
         Sorient_dict,

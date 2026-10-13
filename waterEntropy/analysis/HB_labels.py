@@ -10,6 +10,7 @@ from waterEntropy.analysis.HB import HBCollection
 from waterEntropy.analysis.shells import ShellCollection
 from waterEntropy.utils.helpers import nested_dict
 import waterEntropy.utils.selections as Selections
+from waterEntropy.utils.topology_cache import get_topology_cache
 
 
 class HBLabelCollection:
@@ -311,6 +312,7 @@ def get_HB_labels(atom_idx: int, system, HBs: HBCollection, shells: ShellCollect
     accepts_from_labels = []
     donates_to_labels = []
     if shell:
+        masses = get_topology_cache(system)["masses"]
         # 1.check if HB donating to and accepting from have previously
         # been found
         if shell.labels:
@@ -319,7 +321,7 @@ def get_HB_labels(atom_idx: int, system, HBs: HBCollection, shells: ShellCollect
             donates_to = HBs.find_acceptor(atom_idx)
             accepts_from = HBs.find_donators(atom_idx)
             if accepts_from:
-                for d_idx, _HB_strength in accepts_from:
+                for d_idx in accepts_from:
                     # 3. check if UA being accepted from is in shell of
                     # central UA and add label to list
                     bonded_UA = Selections.find_bonded_heavy_atom(d_idx, system)
@@ -333,11 +335,13 @@ def get_HB_labels(atom_idx: int, system, HBs: HBCollection, shells: ShellCollect
 
             if donates_to:
                 # 4. iterate through acceptors and add labels
-                for d_idx, (a_idx, _HB_strength) in donates_to.items():
-                    acceptor = system.atoms[a_idx]
-                    if acceptor.mass < 1.1:
-                        acceptor = Selections.find_bonded_heavy_atom(a_idx, system)
-                    shell_idx = shell.UA_shell.index(acceptor.index)
+                for d_idx, a_idx in donates_to.items():
+                    acceptor_idx = a_idx
+                    if masses[a_idx] < 1.1:
+                        acceptor_idx = Selections.find_bonded_heavy_atom(
+                            a_idx, system
+                        ).index
+                    shell_idx = shell.UA_shell.index(acceptor_idx)
                     donates_to_labels.append(shell.labels[shell_idx])
     # 5. Add labelled neighbours to shells instance
     shell.donates_to_labels = donates_to_labels

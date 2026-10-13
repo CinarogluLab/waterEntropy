@@ -3,6 +3,14 @@
 [![PyPI version](https://badge.fury.io/py/waterEntropy.svg)](https://badge.fury.io/py/waterEntropy)
 
 # waterEntropy
+
+> **CinarogluLab fork,** waterEntropy with performance patches and a fix to the
+> orientational running averages, used by the optimized CodeEntropy
+> ([CinarogluLab/CodeEntropy](https://github.com/CinarogluLab/CodeEntropy)).
+> 
+
+Upstream project: [jkalayan/waterEntropy](https://github.com/jkalayan/waterEntropy).
+
 The Python package for calculating interfacial water entropy from molecular dynamics simulations.
 
 <p align="center">
@@ -13,10 +21,3 @@ The Python package for calculating interfacial water entropy from molecular dyna
 
 See [here](https://waterentropy.readthedocs.io/en/latest/) for documentation for users and developers.
 
-## License
-
-MIT
-
-## Contact
-
-- jas.kalayan@stfc.ac.uk
